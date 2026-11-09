@@ -42,15 +42,20 @@
   #msg.bad { color:var(--warn); }
   #msg.good { color:var(--ok); }
   .share { display:inline-block; border:1px solid var(--mut); border-radius:4px; padding:0 5px; font-size:13px; }
+  .al { border-top:1px solid var(--line); padding:10px 0; font-size:15px; }
+  .al:first-child { border-top:0; padding-top:2px; }
+  .al .w { font-size:13px; color:var(--mut); }
+  .al.test { opacity:.7; }
 </style>
 </head>
 <body>
 <header><h1>Afrocan price alerts</h1><div id="sub">Alerts on this phone when a price changes, to print a new tag</div></header>
 <main>
   <section id="sLink">
-    <h2>Open this from the store report</h2>
-    <p>On this phone, open the Afrocan store report, scroll to the bottom and tap
-      <b>Turn on price alerts on this phone</b>. That brings you back here, ready to go.</p>
+    <h2>Open this from your sign-up link</h2>
+    <p>On this phone, open the price alert link you were sent (or, in the Afrocan store report, tap
+      <b>Price alerts</b> at the top, then <b>Turn on price alerts on this phone</b>). That brings you back here,
+      ready to go.</p>
     <div id="pasteBox" style="display:none">
       <p class="note">Opened from the Home Screen and it still says this? In Safari, on the page that link opened,
         tap <b>Copy alert link</b>, then come back here and tap Paste.</p>
@@ -85,6 +90,13 @@
     <p class="note">Your phone will ask to allow notifications: tap <b>Allow</b>.</p>
   </section>
 
+  <section id="sRecent">
+    <h2>Price changes on this phone</h2>
+    <p class="note">The alerts this phone got, newest first: the shelf tags to print.</p>
+    <div id="recent"></div>
+    <button id="clearRecent" style="display:none">Clear this list</button>
+  </section>
+
   <section id="sOn">
     <h2 class="ok">&#10003; Alerts are on</h2>
     <p id="onText"></p>
@@ -107,6 +119,7 @@
   const st = {cfg: {}, reg: null, info: null, busy: false};
 
   const show = (...ids) => document.querySelectorAll('section').forEach(s => s.classList.toggle('show', ids.includes(s.id)));
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
   const say = (text, kind) => { $('msg').textContent = text || ''; $('msg').className = kind || ''; };
   const ls = {
     get() { try { return JSON.parse(localStorage.getItem('afrocanAlerts') || '{}'); } catch (e) { return {}; } },
@@ -165,11 +178,34 @@
 
   function showOn(name, list) {
     $('onText').textContent = `"${name}" gets the price alerts for ${list.join(', ')}. When a price changes, the alert ` +
-      'pops up here; tap it to open the store report.';
+      'pops up on this phone; tapping it opens this page with the list above.';
     $('keepTip').textContent = IOS ? 'Keep Afrocan Alerts on your Home Screen: removing it from there stops the alerts.' :
       'Keep notifications allowed for this site in Chrome.';
-    show('sOn');
+    show('sRecent', 'sOn');
+    showRecent();
   }
+
+  // The alerts this phone got (kept by sw.js), newest first
+  async function showRecent() {
+    let list = [];
+    try {
+      const r = await (await caches.open('afrocan-alerts')).match('recent');
+      list = r ? await r.json() : [];
+    } catch (e) { list = []; }
+    const at = t => new Date(t).toLocaleString([], {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'});
+    $('recent').innerHTML = list.length
+      ? list.map(a => `<div class="al${a.test ? ' test' : ''}"><div class="w">${esc(at(a.at))}</div><b>${esc(a.title)}</b>` +
+                      `<div>${esc(a.body).replace(/\n/g, '<br>')}</div></div>`).join('')
+      : '<p class="note">No alerts on this phone yet. When a price changes, it shows here too.</p>';
+    $('clearRecent').style.display = list.length ? '' : 'none';
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && $('sRecent').classList.contains('show')) showRecent();
+  });
+  $('clearRecent').onclick = async () => {
+    try { await (await caches.open('afrocan-alerts')).delete('recent'); } catch (e) { /* nothing to clear */ }
+    showRecent();
+  };
 
   async function start() {
     const linked = fromLink(location.href);
