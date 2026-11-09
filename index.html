@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Afrocan Alerts</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Afrocan Alerts">
+<meta name="theme-color" content="#1f4e3d">
+<meta name="robots" content="noindex">
+<style>
+  :root { --g:#1f4e3d; --bg:#f4f5f2; --line:#e2e5df; --mut:#687064; --warn:#b54708; --ok:#1d7a3a; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; background:var(--bg);
+         color:#1b1f1a; font-size:16px; line-height:1.45; }
+  header { background:var(--g); color:#fff; padding:16px; padding-top:max(16px, env(safe-area-inset-top)); }
+  header h1 { margin:0; font-size:20px; }
+  header div { font-size:14px; opacity:.85; margin-top:2px; }
+  main { max-width:480px; margin:0 auto; padding:16px; padding-bottom:max(24px, env(safe-area-inset-bottom)); }
+  section { display:none; background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px; }
+  section.show { display:block; }
+  h2 { font-size:17px; margin:0 0 8px; }
+  p { margin:8px 0; }
+  ol { margin:8px 0; padding-left:22px; }
+  li { margin:6px 0; }
+  button { font:inherit; font-size:16px; padding:12px 16px; border-radius:10px; border:1px solid var(--line); background:#fff;
+           color:#1b1f1a; width:100%; margin-top:10px; cursor:pointer; }
+  button.pri { background:var(--g); border-color:var(--g); color:#fff; font-weight:600; }
+  button:disabled { opacity:.55; }
+  label { display:block; margin-top:12px; font-size:14px; color:var(--mut); }
+  input[type=text] { display:block; width:100%; font-size:16px; padding:10px; margin-top:4px; border:1px solid var(--line);
+                     border-radius:8px; }
+  .chk { display:flex; align-items:center; gap:10px; font-size:16px; color:#1b1f1a; padding:8px 0; margin:0; }
+  .chk input { width:22px; height:22px; }
+  .note { font-size:14px; color:var(--mut); }
+  .ok { color:var(--ok); font-weight:600; }
+  #msg { font-size:15px; padding:0 4px; min-height:1.4em; }
+  #msg.bad { color:var(--warn); }
+  #msg.good { color:var(--ok); }
+  .share { display:inline-block; border:1px solid var(--mut); border-radius:4px; padding:0 5px; font-size:13px; }
+</style>
+</head>
+<body>
+<header><h1>Afrocan price alerts</h1><div id="sub">Alerts on this phone when a price changes, to print a new tag</div></header>
+<main>
+  <section id="sLink">
+    <h2>Open this from the store report</h2>
+    <p>On this phone, open the Afrocan store report, scroll to the bottom and tap
+      <b>Turn on price alerts on this phone</b>. That brings you back here, ready to go.</p>
+    <div id="pasteBox" style="display:none">
+      <p class="note">Opened from the Home Screen and it still says this? In Safari, on the page that link opened,
+        tap <b>Copy alert link</b>, then come back here and tap Paste.</p>
+      <button id="paste">Paste alert link</button>
+    </div>
+  </section>
+
+  <section id="sInstall">
+    <h2>One step first: add this page to your Home Screen</h2>
+    <p>iPhones only show alerts from pages on the Home Screen.</p>
+    <ol>
+      <li>Tap the Share button <span class="share">&#8679;</span> (bottom of Safari, or next to the address).</li>
+      <li>Scroll down and tap <b>Add to Home Screen</b>, then <b>Add</b>.</li>
+      <li>Open <b>Afrocan Alerts</b> from your Home Screen and turn the alerts on there.</li>
+    </ol>
+    <p class="note">If the Home Screen app asks for the alert link, come back here, tap this button, and paste it there.</p>
+    <button id="copy">Copy alert link</button>
+  </section>
+
+  <section id="sOld">
+    <h2>This browser can't get alerts</h2>
+    <p id="oldWhy"></p>
+  </section>
+
+  <section id="sSetup">
+    <h2 id="setupTitle">Turn on alerts on this phone</h2>
+    <div id="storeList"></div>
+    <label>Name for this phone (so the list in the app shows whose it is)
+      <input type="text" id="name" maxlength="30" placeholder="e.g. Kovu iPhone" autocomplete="off">
+    </label>
+    <button class="pri" id="on">Turn on alerts</button>
+    <p class="note">Your phone will ask to allow notifications: tap <b>Allow</b>.</p>
+  </section>
+
+  <section id="sOn">
+    <h2 class="ok">&#10003; Alerts are on</h2>
+    <p id="onText"></p>
+    <button class="pri" id="test">Send a test alert</button>
+    <button id="change">Change stores or name</button>
+    <button id="off">Turn off alerts on this phone</button>
+    <p class="note" id="keepTip"></p>
+  </section>
+
+  <div id="msg"></div>
+</main>
+<script>
+(function () {
+  const $ = id => document.getElementById(id);
+  const ua = navigator.userAgent;
+  const IOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const STANDALONE = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const PUSH = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const DEVICE = IOS ? 'iPhone' : /Android/.test(ua) ? 'Android' : 'Computer';
+  const st = {cfg: {}, reg: null, info: null, busy: false};
+
+  const show = (...ids) => document.querySelectorAll('section').forEach(s => s.classList.toggle('show', ids.includes(s.id)));
+  const say = (text, kind) => { $('msg').textContent = text || ''; $('msg').className = kind || ''; };
+  const ls = {
+    get() { try { return JSON.parse(localStorage.getItem('afrocanAlerts') || '{}'); } catch (e) { return {}; } },
+    set(v) { try { localStorage.setItem('afrocanAlerts', JSON.stringify(v)); } catch (e) { /* private mode */ } }
+  };
+
+  // The report's link carries the app's ID, the sign-up code and the store after the # (never sent to this site)
+  function fromLink(text) {
+    const i = String(text || '').indexOf('#');
+    if (i < 0) return null;
+    const q = new URLSearchParams(String(text).slice(i + 1));
+    return q.get('u') && q.get('t') ? {u: q.get('u'), t: q.get('t'), s: q.get('s') || ''} : null;
+  }
+
+  async function saveCfg(patch) {
+    st.cfg = Object.assign({}, st.cfg, patch);
+    ls.set(st.cfg);
+    try {           // the service worker reads it when the browser renews this phone's push address
+      const c = await caches.open('afrocan-alerts');
+      await c.put('cfg', new Response(JSON.stringify(st.cfg), {headers: {'Content-Type': 'application/json'}}));
+    } catch (e) { /* not available: only needed in that rare case */ }
+  }
+
+  async function call(body) {
+    let res;
+    try {
+      res = await fetch('https://script.google.com/macros/s/' + encodeURIComponent(st.cfg.u) + '/exec?agent=push',
+                        {method: 'POST', body: JSON.stringify(body)});
+    } catch (e) {
+      throw new Error('Could not reach the store app. Check the internet connection and try again.');
+    }
+    let j;
+    try { j = JSON.parse(await res.text()); } catch (e) { throw new Error('The store app gave an unexpected answer. Try again in a minute.'); }
+    if (!j.ok) { const err = new Error(j.error || 'Something went wrong.'); err.code = j.code; throw err; }
+    return j;
+  }
+
+  const keyBytes = b64 => Uint8Array.from(atob(b64.replace(/-/g, '+').replace(/_/g, '/')), ch => ch.charCodeAt(0));
+  const sameKey = (sub, b64) => {
+    const k = sub && sub.options && sub.options.applicationServerKey;
+    if (!k) return true;                     // the browser doesn't say: assume it is
+    const a = new Uint8Array(k), b = keyBytes(b64);
+    return a.length === b.length && a.every((v, i) => v === b[i]);
+  };
+
+  function stores() { return Array.from(document.querySelectorAll('#storeList input:checked')).map(x => x.value); }
+
+  function fillSetup(list, picked, title) {
+    $('setupTitle').textContent = title || 'Turn on alerts on this phone';
+    $('storeList').innerHTML = '<p>Alerts for which stores?</p>' + list.map((s, i) =>
+      `<label class="chk"><input type="checkbox" value="${s.replace(/"/g, '&quot;')}" id="st${i}"${picked.includes(s) ? ' checked' : ''}>` +
+      `${s.replace(/</g, '&lt;')}</label>`).join('');
+    $('name').value = st.cfg.name || '';
+    show('sSetup');
+  }
+
+  function showOn(name, list) {
+    $('onText').textContent = `"${name}" gets the price alerts for ${list.join(', ')}. When a price changes, the alert ` +
+      'pops up here; tap it to open the store report.';
+    $('keepTip').textContent = IOS ? 'Keep Afrocan Alerts on your Home Screen: removing it from there stops the alerts.' :
+      'Keep notifications allowed for this site in Chrome.';
+    show('sOn');
+  }
+
+  async function start() {
+    const linked = fromLink(location.href);
+    st.cfg = ls.get();
+    if (linked) await saveCfg(linked);
+    if (!st.cfg.u || !st.cfg.t) {
+      $('pasteBox').style.display = IOS && STANDALONE ? '' : 'none';
+      show('sLink');
+      return;
+    }
+    $('sub').textContent = 'Alerts on this phone when a price changes, to print a new tag';
+    if (IOS && !STANDALONE) { show('sInstall'); return; }
+    if (!PUSH) {
+      $('oldWhy').textContent = IOS
+        ? 'This iPhone needs iOS 16.4 or newer for alerts (Settings, General, Software Update). Then open Afrocan Alerts from the Home Screen again.'
+        : 'Open this page in Chrome (Android) or Safari (iPhone). Other browsers and in-app browsers can\'t get alerts.';
+      show('sOld');
+      return;
+    }
+    say('Loading...');
+    try {
+      st.reg = await navigator.serviceWorker.register('sw.js');
+      await navigator.serviceWorker.ready;
+      const [info, sub] = await Promise.all([call({op: 'info', t: st.cfg.t}), st.reg.pushManager.getSubscription()]);
+      st.info = info;
+      await saveCfg({key: info.key});
+      let status = null;
+      if (sub) status = await call({op: 'status', endpoint: sub.endpoint});
+      say('');
+      if (sub && status && status.on && sameKey(sub, info.key) && Notification.permission === 'granted') {
+        await saveCfg({stores: status.stores, name: status.name});
+        showOn(status.name, status.stores);
+      } else {
+        const picked = (st.cfg.stores && st.cfg.stores.length ? st.cfg.stores : [st.cfg.s]).filter(s => info.stores.includes(s));
+        fillSetup(info.stores, picked.length ? picked : info.stores.slice(0, 1),
+                  sub && status && status.status === 'gone' ? 'Alerts stopped on this phone: turn them on again' : '');
+      }
+    } catch (e) {
+      say(e.message, 'bad');
+      if (e.code === 'link') {
+        $('pasteBox').style.display = IOS && STANDALONE ? '' : 'none';
+        show('sLink');
+      }
+    }
+  }
+
+  $('on').onclick = async () => {
+    if (st.busy) return;
+    const list = stores();
+    const name = $('name').value.replace(/\s+/g, ' ').trim();
+    if (!list.length) { say('Tick at least one store.', 'bad'); return; }
+    if (!name) { say('Type a name for this phone.', 'bad'); $('name').focus(); return; }
+    st.busy = true;
+    $('on').disabled = true;
+    say('Turning on...');
+    try {
+      const perm = await Notification.requestPermission();       // first, while it is still the tap
+      if (perm !== 'granted') {
+        throw new Error(IOS ? 'Notifications are not allowed. Open Settings, Notifications, Afrocan Alerts and turn on Allow Notifications, then try again.'
+                            : 'Notifications are blocked. Tap the icon left of the address, then Permissions or Notifications, allow them, and try again.');
+      }
+      const reg = st.reg || await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (sub && !sameKey(sub, st.info.key)) { await sub.unsubscribe(); sub = null; }
+      if (!sub) sub = await reg.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: keyBytes(st.info.key)});
+      const r = await call({op: 'on', t: st.cfg.t, sub: sub.toJSON(), stores: list, name: name, device: DEVICE});
+      await saveCfg({stores: r.stores, name: r.name, device: DEVICE});
+      showOn(r.name, r.stores);
+      say('Done. Tap "Send a test alert" to see one.', 'good');
+    } catch (e) {
+      say(e.message || String(e), 'bad');
+    } finally {
+      st.busy = false;
+      $('on').disabled = false;
+    }
+  };
+
+  $('test').onclick = async () => {
+    $('test').disabled = true;
+    say('Sending...');
+    try {
+      const sub = await (st.reg || await navigator.serviceWorker.ready).pushManager.getSubscription();
+      if (!sub) throw new Error('Alerts are off on this phone. Turn them on again.');
+      await call({op: 'test', endpoint: sub.endpoint});
+      say('Sent. It should pop up in a few seconds' + (IOS ? ' (if this app is open, look at the top of the screen).' : '.'), 'good');
+    } catch (e) {
+      say(e.message, 'bad');
+    } finally {
+      setTimeout(() => { $('test').disabled = false; }, 3000);
+    }
+  };
+
+  $('change').onclick = () => {
+    say('');
+    fillSetup(st.info ? st.info.stores : (st.cfg.stores || []), st.cfg.stores || [], 'Change stores or name');
+  };
+
+  $('off').onclick = async () => {
+    $('off').disabled = true;
+    try {
+      const sub = await (st.reg || await navigator.serviceWorker.ready).pushManager.getSubscription();
+      if (sub) {
+        try { await call({op: 'off', endpoint: sub.endpoint}); } catch (e) { /* signed out here anyway */ }
+        await sub.unsubscribe();
+      }
+      fillSetup(st.info ? st.info.stores : [], st.cfg.stores || []);
+      say('Alerts are off on this phone.', 'good');
+    } catch (e) {
+      say(e.message, 'bad');
+    } finally {
+      $('off').disabled = false;
+    }
+  };
+
+  $('copy').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(location.href);
+      say('Copied. Now add this page to the Home Screen and open it from there.', 'good');
+    } catch (e) {
+      say('Could not copy. Hold the address bar and copy the address instead.', 'bad');
+    }
+  };
+
+  $('paste').onclick = async () => {
+    try {
+      const linked = fromLink(await navigator.clipboard.readText());
+      if (!linked) throw new Error('That is not the alert link. Copy it again on the page in Safari.');
+      await saveCfg(linked);
+      say('');
+      start();
+    } catch (e) {
+      say(e.message || 'Could not paste.', 'bad');
+    }
+  };
+
+  start();
+})();
+</script>
+</body>
+</html>
