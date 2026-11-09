@@ -42,10 +42,30 @@
   #msg.bad { color:var(--warn); }
   #msg.good { color:var(--ok); }
   .share { display:inline-block; border:1px solid var(--mut); border-radius:4px; padding:0 5px; font-size:13px; }
-  .al { border-top:1px solid var(--line); padding:10px 0; font-size:15px; }
-  .al:first-child { border-top:0; padding-top:2px; }
-  .al .w { font-size:13px; color:var(--mut); }
-  .al.test { opacity:.7; }
+  /* Price changes: the main screen once alerts are on */
+  #sChanges { background:transparent; border:0; padding:0; }
+  .chead { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .chead h2 { margin:0; font-size:22px; }
+  button.mini { width:auto; margin:0; padding:8px 14px; font-size:14px; }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; margin:10px 0 2px; }
+  .chips button { width:auto; margin:0; padding:7px 13px; font-size:14px; border-radius:999px; }
+  .chips button.on { background:var(--g); border-color:var(--g); color:#fff; font-weight:600; }
+  .day { font-size:13px; font-weight:700; color:var(--mut); text-transform:uppercase; letter-spacing:.05em; margin:18px 2px 8px; }
+  .pc { background:#fff; border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:10px; }
+  .pc.new { border:2px solid var(--g); padding:11px 13px; }
+  .pc-top { font-size:13px; color:var(--mut); display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .pc-top b { color:#1b1f1a; }
+  .badge { background:var(--g); color:#fff; border-radius:999px; padding:1px 8px; font-size:11px; font-weight:800; letter-spacing:.04em; }
+  .pc-name { font-size:20px; font-weight:800; line-height:1.25; margin-top:4px; overflow-wrap:anywhere; }
+  .pc-code { font-size:14px; color:var(--mut); margin-top:2px; letter-spacing:.02em; }
+  .pc-price { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 10px; margin-top:8px; }
+  .pc-old { font-size:19px; color:var(--mut); text-decoration:line-through; }
+  .pc-arrow { font-size:19px; color:var(--mut); }
+  .pc-new { font-size:30px; font-weight:800; line-height:1.1; }
+  .pc-diff { font-size:13px; font-weight:800; border-radius:999px; padding:2px 9px; align-self:center; }
+  .pc-diff.up { background:#fdf1e7; color:var(--warn); }
+  .pc-diff.down { background:#eef6f0; color:var(--ok); }
+  #sOn h2 { font-size:16px; }
 </style>
 </head>
 <body>
@@ -111,11 +131,11 @@
     <p class="note">Your phone will ask to allow notifications: tap <b>Allow</b>.</p>
   </section>
 
-  <section id="sRecent">
-    <h2>Price changes on this phone</h2>
-    <p class="note">The alerts this phone got, newest first: the shelf tags to print.</p>
-    <div id="recent"></div>
-    <button id="clearRecent" style="display:none">Clear this list</button>
+  <section id="sChanges">
+    <div class="chead"><h2>Price changes</h2><button class="mini" id="refresh">Refresh</button></div>
+    <p class="note">Print a new shelf tag for each one. Newest first, last 7 days.</p>
+    <div class="chips" id="storeChips"></div>
+    <div id="changes"></div>
   </section>
 
   <section id="sOn">
@@ -199,34 +219,98 @@
 
   function showOn(name, list) {
     $('onText').textContent = `"${name}" gets the price alerts for ${list.join(', ')}. When a price changes, the alert ` +
-      'pops up on this phone; tapping it opens this page with the list above.';
+      'pops up on this phone; tapping it opens this page.';
     $('keepTip').textContent = IOS ? 'Keep Afrocan Alerts on your Home Screen: removing it from there stops the alerts.' :
       'Keep notifications allowed for this site in Chrome.';
-    show('sRecent', 'sOn');
-    showRecent();
+    $('sub').textContent = 'Print a new shelf tag for each price change';
+    show('sChanges', 'sOn');
+    markViewed();
+    loadChanges();
   }
 
-  // The alerts this phone got (kept by sw.js), newest first
-  async function showRecent() {
-    let list = [];
+  // ---------- Price changes: the main screen once alerts are on ----------
+  // The list comes from the store app (every price change at this phone's stores in the last 7 days, also ones
+  // whose alert didn't reach the phone); without a connection, the alerts this phone kept (sw.js) instead.
+  const money = v => '$' + Number(v).toFixed(2);
+  const diffText = d => { const a = Math.abs(d); return a < 1 ? Math.round(a * 100) + '¢' : '$' + a.toFixed(2); };
+  const timeText = d => d.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+  function dayText(d) {
+    const t = new Date(), y = new Date(Date.now() - 86400000);
+    if (d.toDateString() === t.toDateString()) return 'Today';
+    if (d.toDateString() === y.toDateString()) return 'Yesterday';
+    return d.toLocaleDateString([], {weekday: 'long', month: 'short', day: 'numeric'});
+  }
+  // Changes newer than the last visit are marked NEW for this visit
+  function markViewed() {
+    st.seenBase = Number(st.cfg.seen || 0);
+    saveCfg({seen: Date.now()});
+  }
+
+  async function loadChanges() {
+    if (!st.changes) $('changes').innerHTML = '<p class="note">Loading the price changes...</p>';
+    let list = null;
+    try {
+      const sub = st.sub || (st.reg ? await st.reg.pushManager.getSubscription() : null);
+      if (sub) list = (await call({op: 'changes', endpoint: sub.endpoint})).changes;
+    } catch (e) { list = null; }
+    st.offline = !list;
+    st.changes = list || await keptChanges();
+    renderChanges();
+  }
+
+  // The alerts kept on this phone, in the same shape (lines like "Name (number): $3.99 → $4.00")
+  async function keptChanges() {
+    let kept = [];
     try {
       const r = await (await caches.open('afrocan-alerts')).match('recent');
-      list = r ? await r.json() : [];
-    } catch (e) { list = []; }
-    const at = t => new Date(t).toLocaleString([], {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'});
-    $('recent').innerHTML = list.length
-      ? list.map(a => `<div class="al${a.test ? ' test' : ''}"><div class="w">${esc(at(a.at))}</div><b>${esc(a.title)}</b>` +
-                      `<div>${esc(a.body).replace(/\n/g, '<br>')}</div></div>`).join('')
-      : '<p class="note">No alerts on this phone yet. When a price changes, it shows here too.</p>';
-    $('clearRecent').style.display = list.length ? '' : 'none';
+      kept = r ? await r.json() : [];
+    } catch (e) { kept = []; }
+    const out = [];
+    kept.filter(a => !a.test).forEach(a => {
+      const store = a.store || String(a.title || '').split(':')[0];
+      String(a.body || '').split('\n').forEach(line => {
+        const m = /^(.*) \(([^()]+)\): \$([\d.]+) → \$([\d.]+)$/.exec(line.trim());
+        const p = m ? null : /^Product (\S+): \$([\d.]+) → \$([\d.]+)$/.exec(line.trim());
+        if (m) out.push({at: new Date(a.at).toISOString(), store, code: m[2], product: m[1], was: +m[3], now: +m[4]});
+        else if (p) out.push({at: new Date(a.at).toISOString(), store, code: p[1], product: '', was: +p[2], now: +p[3]});
+      });
+    });
+    return out;
   }
+
+  function renderChanges() {
+    const all = st.changes || [];
+    const stores = Array.from(new Set(all.map(c => c.store)));
+    if (st.filter && !stores.includes(st.filter)) st.filter = '';
+    $('storeChips').innerHTML = stores.length > 1 ? ['', ...stores].map(s =>
+      `<button data-s="${esc(s)}" class="${s === (st.filter || '') ? 'on' : ''}">${s ? esc(s) : 'All stores'}</button>`).join('') : '';
+    $('storeChips').querySelectorAll('button').forEach(b => b.onclick = () => { st.filter = b.dataset.s; renderChanges(); });
+    let html = '', day = '';
+    all.filter(c => !st.filter || c.store === st.filter).forEach(c => {
+      const d = new Date(c.at);
+      if (d.toDateString() !== day) { day = d.toDateString(); html += `<div class="day">${esc(dayText(d))}</div>`; }
+      const diff = Math.round((c.now - c.was) * 100) / 100;
+      const isNew = d.getTime() > (st.seenBase || 0);
+      html += `<div class="pc${isNew ? ' new' : ''}">` +
+        `<div class="pc-top"><b>${esc(c.store)}</b><span>&middot; ${esc(timeText(d))}</span>${isNew ? '<span class="badge">NEW</span>' : ''}</div>` +
+        `<div class="pc-name">${esc(c.product || 'Product ' + c.code)}</div>` +
+        `<div class="pc-code">${esc(c.code)}</div>` +
+        `<div class="pc-price"><span class="pc-old">${money(c.was)}</span><span class="pc-arrow">&rarr;</span>` +
+        `<span class="pc-new">${money(c.now)}</span>` +
+        (diff ? `<span class="pc-diff ${diff > 0 ? 'up' : 'down'}">${diff > 0 ? '&#9650;' : '&#9660;'} ${diffText(diff)}</span>` : '') +
+        `</div></div>`;
+    });
+    $('changes').innerHTML = (st.offline ? '<p class="note">Couldn\'t reach the store app just now, so these are the alerts ' +
+      'kept on this phone. Tap Refresh to try again.</p>' : '') +
+      (html || `<p class="note">No price changes in the last 7 days${st.filter ? ' at ' + esc(st.filter) : ''}. ` +
+               'When a price changes, it pops up on this phone and shows here.</p>');
+  }
+
+  $('refresh').onclick = () => { $('refresh').disabled = true; loadChanges().finally(() => { $('refresh').disabled = false; }); };
+  // Back to the front (e.g. an alert was tapped while the page was open): the latest list
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && $('sRecent').classList.contains('show')) showRecent();
+    if (document.visibilityState === 'visible' && $('sChanges').classList.contains('show')) { markViewed(); loadChanges(); }
   });
-  $('clearRecent').onclick = async () => {
-    try { await (await caches.open('afrocan-alerts')).delete('recent'); } catch (e) { /* nothing to clear */ }
-    showRecent();
-  };
 
   async function start() {
     const linked = fromLink(location.href);
