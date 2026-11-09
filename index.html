@@ -67,8 +67,10 @@
     <h2>One step first: add this page to your Home Screen</h2>
     <p>iPhones only show alerts from pages on the Home Screen.</p>
     <ol>
+      <li>Make sure this page is open in <b>Safari</b>. (Opened inside another app? Tap the Safari or compass icon, or
+        "Open in Safari", first.)</li>
       <li>Tap the Share button <span class="share">&#8679;</span> (bottom of Safari, or next to the address).</li>
-      <li>Scroll down and tap <b>Add to Home Screen</b>, then <b>Add</b>.</li>
+      <li>Scroll down and tap <b>Add to Home Screen</b>. Leave <b>Open as Web App</b> switched on, then tap <b>Add</b>.</li>
       <li>Open <b>Afrocan Alerts</b> from your Home Screen and turn the alerts on there.</li>
     </ol>
     <p class="note">If the Home Screen app asks for the alert link, come back here, tap this button, and paste it there.</p>
@@ -78,6 +80,25 @@
   <section id="sOld">
     <h2>This browser can't get alerts</h2>
     <p id="oldWhy"></p>
+  </section>
+
+  <section id="sPerm">
+    <h2>The phone didn't allow notifications</h2>
+    <div id="permIos">
+      <p>iPhones only ask from the Afrocan Alerts icon on the Home Screen. Do these in order and stop when it works:</p>
+      <ol>
+        <li>Close this, then open <b>Afrocan Alerts</b> from its own icon on the Home Screen (not from a link in another
+          app) and tap <b>Turn on alerts</b>. Tap <b>Allow</b> when the iPhone asks.</li>
+        <li>If you tapped Don't Allow before: open <b>Settings</b>, <b>Notifications</b>, <b>Afrocan Alerts</b>, turn on
+          <b>Allow Notifications</b>, and try again.</li>
+        <li>If there is no Afrocan Alerts icon, or no Afrocan Alerts in Settings: delete the icon if there is one (press and
+          hold it, then Remove), open the alert link again in Safari, tap Share, <b>Add to Home Screen</b>, leave
+          <b>Open as Web App</b> on, tap Add, and open the new icon.</li>
+      </ol>
+    </div>
+    <p id="permOther">Notifications are blocked for this site. Tap the icon left of the address, then Permissions or
+      Notifications, allow them, and try again.</p>
+    <button class="pri" id="permRetry">Try again</button>
   </section>
 
   <section id="sSetup">
@@ -229,9 +250,15 @@
     try {
       st.reg = await navigator.serviceWorker.register('sw.js');
       await navigator.serviceWorker.ready;
-      const [info, sub] = await Promise.all([call({op: 'info', t: st.cfg.t}), st.reg.pushManager.getSubscription()]);
+      const [info, sub0] = await Promise.all([call({op: 'info', t: st.cfg.t}), st.reg.pushManager.getSubscription()]);
       st.info = info;
       await saveCfg({key: info.key});
+      let sub = sub0;
+      if (sub && !sameKey(sub, info.key)) {     // made for an older key: drop it now, so the tap can make a new one
+        try { await sub.unsubscribe(); } catch (e) { /* gone anyway */ }
+        sub = null;
+      }
+      st.sub = sub;
       let status = null;
       if (sub) status = await call({op: 'status', endpoint: sub.endpoint});
       say('');
@@ -262,25 +289,39 @@
     $('on').disabled = true;
     say('Turning on...');
     try {
-      const perm = await Notification.requestPermission();       // first, while it is still the tap
-      if (perm !== 'granted') {
-        throw new Error(IOS ? 'Notifications are not allowed. Open Settings, Notifications, Afrocan Alerts and turn on Allow Notifications, then try again.'
-                            : 'Notifications are blocked. Tap the icon left of the address, then Permissions or Notifications, allow them, and try again.');
+      // Signing up for push is what makes the phone ask "Allow notifications?", and iPhones only ask when it is
+      // the very first thing after the tap (no other waiting before it). Asking through requestPermission()
+      // first was unreliable on some iPhones: it could answer "denied" without asking.
+      let sub = st.sub;
+      if (!sub) {
+        sub = await st.reg.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: keyBytes(st.info.key)});
+        st.sub = sub;
       }
-      const reg = st.reg || await navigator.serviceWorker.ready;
-      let sub = await reg.pushManager.getSubscription();
-      if (sub && !sameKey(sub, st.info.key)) { await sub.unsubscribe(); sub = null; }
-      if (!sub) sub = await reg.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: keyBytes(st.info.key)});
-      const r = await call({op: 'on', t: st.cfg.t, sub: sub.toJSON(), stores: list, name: name, device: DEVICE});
-      await saveCfg({stores: r.stores, name: r.name, device: DEVICE});
+      const r = await call({op: 'on', t: st.cfg.t, sub: sub.toJSON(), stores: list, name: name, device: DEVICE,
+                            old: st.cfg.endpoint && st.cfg.endpoint !== sub.endpoint ? st.cfg.endpoint : ''});   // same row as before
+      await saveCfg({stores: r.stores, name: r.name, device: DEVICE, endpoint: sub.endpoint});
       showOn(r.name, r.stores);
       say('Done. Tap "Send a test alert" to see one.', 'good');
     } catch (e) {
-      say(e.message || String(e), 'bad');
+      const refused = e && (e.name === 'NotAllowedError' || e.name === 'NotAllowedErr') ||
+                      (typeof Notification !== 'undefined' && Notification.permission === 'denied');
+      if (refused) {
+        say('');
+        $('permIos').style.display = IOS ? '' : 'none';
+        $('permOther').style.display = IOS ? 'none' : '';
+        show('sPerm');
+      } else {
+        say(e && e.message ? e.message : String(e), 'bad');
+      }
     } finally {
       st.busy = false;
       $('on').disabled = false;
     }
+  };
+
+  $('permRetry').onclick = () => {         // back to the form as it was filled in
+    say('');
+    show('sSetup');
   };
 
   $('test').onclick = async () => {
@@ -311,6 +352,7 @@
         try { await call({op: 'off', endpoint: sub.endpoint}); } catch (e) { /* signed out here anyway */ }
         await sub.unsubscribe();
       }
+      st.sub = null;
       fillSetup(st.info ? st.info.stores : [], st.cfg.stores || []);
       say('Alerts are off on this phone.', 'good');
     } catch (e) {
