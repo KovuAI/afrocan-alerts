@@ -65,6 +65,9 @@
   .pc-diff { font-size:13px; font-weight:800; border-radius:999px; padding:2px 9px; align-self:center; }
   .pc-diff.up { background:#fdf1e7; color:var(--warn); }
   .pc-diff.down { background:#eef6f0; color:var(--ok); }
+  .pc-from { font-size:14px; color:var(--mut); margin-top:8px; padding-top:7px; border-top:1px solid var(--line); overflow-wrap:anywhere; }
+  .pc-from b { color:#1b1f1a; }
+  .pc-from.away b { color:var(--warn); }
   #sOn h2 { font-size:16px; }
 </style>
 </head>
@@ -258,7 +261,8 @@
     renderChanges();
   }
 
-  // The alerts kept on this phone, in the same shape (lines like "Name (number): $3.99 → $4.00")
+  // The alerts kept on this phone, in the same shape (lines like "Name (number): $3.99 → $4.00 · from Toronto BackOffice";
+  // alerts sent before 2026-11-13 have no "· from ...")
   async function keptChanges() {
     let kept = [];
     try {
@@ -269,13 +273,33 @@
     kept.filter(a => !a.test).forEach(a => {
       const store = a.store || String(a.title || '').split(':')[0];
       String(a.body || '').split('\n').forEach(line => {
-        const m = /^(.*) \(([^()]+)\): \$([\d.]+) → \$([\d.]+)$/.exec(line.trim());
-        const p = m ? null : /^Product (\S+): \$([\d.]+) → \$([\d.]+)$/.exec(line.trim());
-        if (m) out.push({at: new Date(a.at).toISOString(), store, code: m[2], product: m[1], was: +m[3], now: +m[4]});
-        else if (p) out.push({at: new Date(a.at).toISOString(), store, code: p[1], product: '', was: +p[2], now: +p[3]});
+        const m = /^(.*) \(([^()]+)\): \$([\d.]+) → \$([\d.]+)(?: · from (.+))?$/.exec(line.trim());
+        const p = m ? null : /^Product (\S+): \$([\d.]+) → \$([\d.]+)(?: · from (.+))?$/.exec(line.trim());
+        if (m) out.push({at: new Date(a.at).toISOString(), store, code: m[2], product: m[1], was: +m[3], now: +m[4], origin: m[5] || ''});
+        else if (p) out.push({at: new Date(a.at).toISOString(), store, code: p[1], product: '', was: +p[2], now: +p[3], origin: p[4] || ''});
       });
     });
     return out;
+  }
+
+  // Where a change started, as the store app writes it ("Toronto BackOffice", "Toronto phone (Darryl)") -> {store, how}
+  function originParts(o) {
+    let m = /^(.*) BackOffice$/.exec(o || '');
+    if (m) return {store: m[1], how: 'BackOffice'};
+    m = /^(.*) phone(?: \((.*)\))?$/.exec(o || '');
+    if (m) return {store: m[1], how: 'phone' + (m[2] ? ' (' + m[2] + ')' : '')};
+    return o ? {store: o, how: ''} : null;
+  }
+
+  // "Changed here · BackOffice · copied to Brampton, Hamilton" or "From Toronto · BackOffice" (copied to this store)
+  function fromLine(c) {
+    const o = originParts(c.origin);
+    if (!o) return '';
+    const how = o.how ? ` &middot; ${esc(o.how)}` : '';
+    if (o.store === c.store) {
+      return `<div class="pc-from">Changed <b>here</b>${how}${c.copied ? ` &middot; copied to ${esc(c.copied)}` : ''}</div>`;
+    }
+    return `<div class="pc-from away">From <b>${esc(o.store)}</b>${how}</div>`;
   }
 
   function renderChanges() {
@@ -298,7 +322,7 @@
         `<div class="pc-price"><span class="pc-old">${money(c.was)}</span><span class="pc-arrow">&rarr;</span>` +
         `<span class="pc-new">${money(c.now)}</span>` +
         (diff ? `<span class="pc-diff ${diff > 0 ? 'up' : 'down'}">${diff > 0 ? '&#9650;' : '&#9660;'} ${diffText(diff)}</span>` : '') +
-        `</div></div>`;
+        `</div>${fromLine(c)}</div>`;
     });
     $('changes').innerHTML = (st.offline ? '<p class="note">Couldn\'t reach the store app just now, so these are the alerts ' +
       'kept on this phone. Tap Refresh to try again.</p>' : '') +
